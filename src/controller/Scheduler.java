@@ -6,13 +6,10 @@ import model.AbstractTask;
 import java.util.PriorityQueue;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
 
 public class Scheduler<T extends AbstractTask> {
 
     private final Object lock = new Object();
-
-    private long nextFireTime = Long.MAX_VALUE;
 
     private final PriorityQueue<T> queue = new PriorityQueue<>(Constants.CAPACITY);
 
@@ -23,7 +20,6 @@ public class Scheduler<T extends AbstractTask> {
     public void add(T entity) {
         synchronized (lock) {
             queue.add(entity);
-            nextFireTime = Math.min(nextFireTime, System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(entity.delay));
             lock.notify();
         }
     }
@@ -72,19 +68,17 @@ public class Scheduler<T extends AbstractTask> {
                 }
             }
 
-            if(!queue.isEmpty()) {
-                nextFireTime = Long.MAX_VALUE;
-            }
-            else {
-                nextFireTime = queue.peek().delay;
-            }
-
-
             try {
-                lock.wait(nextFireTime);
+                if(queue.isEmpty()) {
+                    lock.wait();
+                }
+                else {
+                    lock.wait(queue.peek().delay);
+                }
             } catch (InterruptedException exception) {
                 Thread.currentThread().interrupt();
             }
+
         }
 
     }
