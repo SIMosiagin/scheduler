@@ -27,7 +27,7 @@ public abstract class AbstractTask implements RunnableTask {
     public void run() {
         System.out.println("hello from task =" + this.name);
         try {
-            TimeUnit.SECONDS.sleep(15);
+            TimeUnit.SECONDS.sleep(3);
         } catch (InterruptedException e) {
             e.printStackTrace();
         }

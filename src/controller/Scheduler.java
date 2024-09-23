@@ -66,6 +66,9 @@ public class Scheduler<T extends AbstractTask> {
                         entity.isPaused = true;
                     }
                 }
+                else {
+                    break;
+                }
             }
 
             try {
