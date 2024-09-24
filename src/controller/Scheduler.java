@@ -4,13 +4,11 @@ import constants.Constants;
 import model.AbstractTask;
 
 import java.util.concurrent.*;
-import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 public class Scheduler<T extends AbstractTask> {
 
     private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock(true);
-    private final Condition notEmpty = lock.writeLock().newCondition();
 
     private final BlockingQueue<T> queue = new PriorityBlockingQueue<>(Constants.CAPACITY);
 
@@ -24,8 +22,7 @@ public class Scheduler<T extends AbstractTask> {
         subThread.interrupt();
         lock.writeLock().lock();
         try {
-            queue.add(entity);
-            notEmpty.signal(); // Уведомляем, что очередь не пустая
+            this.queue.add(entity);
         } finally {
             lock.writeLock().unlock();
         }
@@ -41,38 +38,34 @@ public class Scheduler<T extends AbstractTask> {
     }
 
     public void stop() {
-        subThread.notify();
+        subThread.interrupt();
         lock.writeLock().lock();
         try {
             running = false;
         } finally {
             lock.writeLock().unlock();
         }
-
     }
 
     private void executeDueTasks() {
-        try {
-            lock.readLock().lock();
-             try {
-                 if (queue.isEmpty()) {
-                     subThread.wait(); // Ждем, пока не появится задача
-                 } else {
-                     lock.readLock().unlock(); // Освобождаем readLock перед переходом в writeLock
-                     lock.writeLock().lock();
-                     try {
-                         exetuteTasks();
-                     } finally {
-                         lock.writeLock().unlock();
-                     }
-                     lock.readLock().lockInterruptibly(); // Захватываем readLock обратно после выполнения задач
-                 }
-
-            } finally {
-                lock.readLock().unlock();
+        synchronized (lock.readLock()) {
+            try {
+                if (queue.isEmpty()) {
+                    lock.readLock().wait(); // Ждем, пока не появится задача
+                } else {
+                    lock.writeLock().lock();
+                    try {
+                        exetuteTasks();
+                    } finally {
+                        lock.writeLock().unlock();
+                    }
+                    if (!queue.isEmpty()) {
+                        lock.readLock().wait(queue.peek().delay);
+                    }
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
             }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt(); // Восстанавливаем статус прерывания
         }
     }
 

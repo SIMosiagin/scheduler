@@ -54,7 +54,7 @@ public class Main {
         }
 
         try {
-            TimeUnit.SECONDS.sleep(10);
+            TimeUnit.SECONDS.sleep(3);
             Task task = new Task(1, "immediate", false,false);
             scheduler.add(task);
         } catch (InterruptedException e) {
