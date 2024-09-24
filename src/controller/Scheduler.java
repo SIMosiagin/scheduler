@@ -1,89 +1,98 @@
 package controller;
 
-import Constants.Constants;
+import constants.Constants;
 import model.AbstractTask;
 
-import java.util.PriorityQueue;
-import java.util.concurrent.Executor;
-import java.util.concurrent.Executors;
+import java.util.concurrent.*;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 public class Scheduler<T extends AbstractTask> {
 
-    private final Object lock = new Object();
+    private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock(true);
+    private final Condition notEmpty = lock.writeLock().newCondition();
 
-    private final PriorityQueue<T> queue = new PriorityQueue<>(Constants.CAPACITY);
+    private final BlockingQueue<T> queue = new PriorityBlockingQueue<>(Constants.CAPACITY);
 
     private final Executor pool =  Executors.newFixedThreadPool(Constants.THREADS);
+
+    private Thread subThread ;
 
     private boolean running = true;
 
     public void add(T entity) {
-        synchronized (lock) {
+        subThread.interrupt();
+        lock.writeLock().lock();
+        try {
             queue.add(entity);
-            lock.notify();
+            notEmpty.signal(); // Уведомляем, что очередь не пустая
+        } finally {
+            lock.writeLock().unlock();
         }
     }
 
     public void start() {
-
-        Thread subThread = new Thread(() -> {
+        subThread = new Thread(() -> {
             while (running) {
                 executeDueTasks();
             }
         });
-
         subThread.start();
     }
 
     public void stop() {
-        running = false;
-        synchronized (lock) {
-            lock.notify();
+        subThread.notify();
+        lock.writeLock().lock();
+        try {
+            running = false;
+        } finally {
+            lock.writeLock().unlock();
         }
+
     }
 
     private void executeDueTasks() {
-        synchronized (lock) {
-            while (queue.isEmpty()) {
-                try {
-                    lock.wait();
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    return;
-                }
-            }
+        try {
+            lock.readLock().lock();
+             try {
+                 if (queue.isEmpty()) {
+                     subThread.wait(); // Ждем, пока не появится задача
+                 } else {
+                     lock.readLock().unlock(); // Освобождаем readLock перед переходом в writeLock
+                     lock.writeLock().lock();
+                     try {
+                         exetuteTasks();
+                     } finally {
+                         lock.writeLock().unlock();
+                     }
+                     lock.readLock().lockInterruptibly(); // Захватываем readLock обратно после выполнения задач
+                 }
 
-            long currentTime = System.currentTimeMillis();
-            while(!queue.isEmpty()) {
-                if(queue.peek().isPaused != true && currentTime >= queue.peek().executionTime) {
-                    T entity = queue.poll();
-                    pool.execute(entity);
-                    if(entity.isRepeatable) {
-                        entity.executionTime = currentTime + entity.delay;
-                        queue.add(entity);
-                    }
-                    else {
-                        entity.isPaused = true;
-                    }
-                }
-                else {
-                    break;
-                }
+            } finally {
+                lock.readLock().unlock();
             }
-
-            try {
-                if(queue.isEmpty()) {
-                    lock.wait();
-                }
-                else {
-                    lock.wait(queue.peek().delay);
-                }
-            } catch (InterruptedException exception) {
-                Thread.currentThread().interrupt();
-            }
-
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt(); // Восстанавливаем статус прерывания
         }
-
     }
 
+    private void exetuteTasks() {
+        long currentTime = System.currentTimeMillis();
+        while(!queue.isEmpty()) {
+            if(!queue.peek().isPaused && currentTime >= queue.peek().executionTime) {
+                T entity = queue.poll();
+                pool.execute(entity);
+                if(entity.isRepeatable) {
+                    entity.executionTime += entity.delay;
+                    queue.add(entity);
+                }
+                else {
+                    entity.isPaused = true;
+                }
+            }
+            else {
+                break;
+            }
+        }
+    }
 }

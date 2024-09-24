@@ -45,7 +45,7 @@ public class Main {
         for (int i = 0; i < 10; i++) {
             Thread t = new Thread(() -> {
                for(int j = 0; j < 10; j++) {
-                   Task task = new Task(j + 10000, "name =" + j + " thread name =" + Thread.currentThread(), false,false);
+                   Task task = new Task(j, "name =" + j + " thread name =" + Thread.currentThread(), false,false);
                    scheduler.add(task);
                }
             });

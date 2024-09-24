@@ -21,6 +21,6 @@ public class Task extends AbstractTask {
             return -1;
         }
 
-        return Long.compare(this.delay, other.delay);
+        return Long.compare(this.executionTime, other.executionTime);
     }
 }
