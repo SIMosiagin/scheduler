@@ -25,13 +25,11 @@ public class Scheduler<T extends AbstractTask> {
     }
 
     public void start() {
-
         Thread subThread = new Thread(() -> {
             while (running) {
                 executeDueTasks();
             }
         });
-
         subThread.start();
     }
 
@@ -44,33 +42,6 @@ public class Scheduler<T extends AbstractTask> {
 
     private void executeDueTasks() {
         synchronized (lock) {
-            while (queue.isEmpty()) {
-                try {
-                    lock.wait();
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    return;
-                }
-            }
-
-            long currentTime = System.currentTimeMillis();
-            while(!queue.isEmpty()) {
-                if(queue.peek().isPaused != true && currentTime >= queue.peek().executionTime) {
-                    T entity = queue.poll();
-                    pool.execute(entity);
-                    if(entity.isRepeatable) {
-                        entity.executionTime = currentTime + entity.delay;
-                        queue.add(entity);
-                    }
-                    else {
-                        entity.isPaused = true;
-                    }
-                }
-                else {
-                    break;
-                }
-            }
-
             try {
                 if(queue.isEmpty()) {
                     lock.wait();
@@ -82,8 +53,23 @@ public class Scheduler<T extends AbstractTask> {
                 Thread.currentThread().interrupt();
             }
 
+            long currentTime = System.currentTimeMillis();
+            while(!queue.isEmpty()) {
+                if(!queue.peek().isPaused && currentTime >= queue.peek().executionTime) {
+                    T entity = queue.poll();
+                    pool.execute(entity);
+                    if(entity.isRepeatable) {
+                        entity.executionTime += entity.delay;
+                        queue.add(entity);
+                    }
+                    else {
+                        entity.isPaused = true;
+                    }
+                }
+                else {
+                    break;
+                }
+            }
         }
-
     }
-
 }
