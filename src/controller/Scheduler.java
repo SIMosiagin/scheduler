@@ -4,11 +4,13 @@ import constants.Constants;
 import model.AbstractTask;
 
 import java.util.concurrent.*;
+import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 public class Scheduler<T extends AbstractTask> {
 
     private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock(true);
+    private final Condition wCond = lock.writeLock().newCondition();
 
     private final BlockingQueue<T> queue = new PriorityBlockingQueue<>(Constants.CAPACITY);
 
@@ -19,10 +21,11 @@ public class Scheduler<T extends AbstractTask> {
     private boolean running = true;
 
     public void add(T entity) {
-        subThread.interrupt();
         lock.writeLock().lock();
         try {
             this.queue.add(entity);
+            wCond.signalAll();
+
         } finally {
             lock.writeLock().unlock();
         }
@@ -38,34 +41,32 @@ public class Scheduler<T extends AbstractTask> {
     }
 
     public void stop() {
-        subThread.interrupt();
         lock.writeLock().lock();
         try {
             running = false;
+            wCond.signalAll();
         } finally {
             lock.writeLock().unlock();
         }
     }
 
     private void executeDueTasks() {
-        synchronized (lock.readLock()) {
-            try {
-                if (queue.isEmpty()) {
-                    lock.readLock().wait(); // Ждем, пока не появится задача
-                } else {
-                    lock.writeLock().lock();
-                    try {
-                        exetuteTasks();
-                    } finally {
-                        lock.writeLock().unlock();
-                    }
-                    if (!queue.isEmpty()) {
-                        lock.readLock().wait(queue.peek().delay);
-                    }
+
+        lock.writeLock().lock();
+
+        try {
+            if(queue.isEmpty()) {
+                wCond.await();
+            } else {
+                exetuteTasks();
+                if(!queue.isEmpty()) {
+                    wCond.await(queue.peek().delay, TimeUnit.MILLISECONDS);
                 }
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
             }
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+        } finally {
+            lock.writeLock().unlock();
         }
     }
 
