@@ -4,89 +4,72 @@ import constants.Constants;
 import model.AbstractTask;
 
 import java.util.concurrent.*;
-import java.util.concurrent.locks.Condition;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class Scheduler<T extends AbstractTask> {
+    private final AtomicReference<CompletableFuture<Void>> waker = new AtomicReference<>(new CompletableFuture<Void>());
+    private final PriorityBlockingQueue<T> queue = new PriorityBlockingQueue<>(Constants.CAPACITY);
+    private final Executor pool = Executors.newFixedThreadPool(Constants.THREADS);
+    private volatile boolean running = true;
 
-    private CompletableFuture<Void> addEvent = new CompletableFuture<Void>();
-    private CompletableFuture<Void> fireTimeEvent = new CompletableFuture<Void>();
-
-    private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock(true);
-
-    private final BlockingQueue<T> queue = new PriorityBlockingQueue<>(Constants.CAPACITY);
-
-    private final Executor pool =  Executors.newFixedThreadPool(Constants.THREADS);
-
-
-    private boolean running = true;
+    private void wake() {
+        waker.getAndSet(new CompletableFuture<>()).complete(null);
+    }
 
     public void add(T entity) {
-        lock.writeLock().lock();
-        try {
-            addEvent.thenRun(() -> {
-                    this.queue.add(entity);
-            }).join();
-        } finally {
-            lock.writeLock().unlock();
-        }
+        this.queue.add(entity);
+        wake();
     }
 
     public void start() {
-        while (running) {
-            CompletableFuture.anyOf(addEvent, fireTimeEvent)
-                    .thenRun(this::exetuteTasks)
-                    .thenRun(this::executeDueTasks);
-        }
+        new Thread(() -> {
+            while (running) {
+                executeDueTasks();
+            }
+        }).start();
     }
 
     public void stop() {
-        lock.writeLock().lock();
-        try {
-            running = false;
-        } finally {
-            lock.writeLock().unlock();
-        }
+        this.running = false;
+        wake();
     }
 
     private void executeDueTasks() {
-        lock.writeLock().lock();
-        try {
-            if(queue.isEmpty()) {
-                fireTimeEvent.wait();
-            } else {
-                if(!queue.isEmpty()) {
-                    fireTimeEvent.wait(queue.peek().delay);
-                }
+         if (queue.isEmpty()) {
+            waker.get().join();
+        } else {
+            long nextFireTime = queue.peek().executionTime - System.currentTimeMillis();
+            if(nextFireTime > 0) {
+                CompletableFuture delayedWaker = CompletableFuture.runAsync(() -> {
+                    try {
+                        Thread.sleep(nextFireTime);
+                    } catch (InterruptedException e) {
+                        throw new RuntimeException(e);
+                    }
+                });
+                CompletableFuture.anyOf(waker.get(), delayedWaker).join();
             }
-            lock.writeLock().unlock();
-        } catch (InterruptedException exception) {
-            Thread.currentThread().interrupt();
+            else {
+                exetuteTasks();
+            }
         }
     }
 
     private void exetuteTasks() {
-        lock.writeLock().lock();
-        try {
-            long currentTime = System.currentTimeMillis();
-            while(!queue.isEmpty()) {
-                if(!queue.peek().isPaused && currentTime >= queue.peek().executionTime) {
-                    T entity = queue.poll();
-                    pool.execute(entity);
-                    if(entity.isRepeatable) {
-                        entity.executionTime += entity.delay;
-                        queue.add(entity);
-                    }
-                    else {
-                        entity.isPaused = true;
-                    }
+        long currentTime = System.currentTimeMillis();
+        while (!queue.isEmpty()) {
+            if (!queue.peek().isPaused && currentTime >= queue.peek().executionTime) {
+                T entity = queue.poll();
+                pool.execute(entity);
+                if (entity.isRepeatable) {
+                    entity.executionTime += entity.delay;
+                    queue.add(entity);
+                } else {
+                    entity.isPaused = true;
                 }
-                else {
-                    break;
-                }
+            } else {
+                break;
             }
-        } finally {
-            lock.writeLock().unlock();
         }
     }
 }
